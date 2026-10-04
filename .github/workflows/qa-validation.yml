@@ -1,6 +1,6 @@
 name: Agentic QA PBI Validation
 
-run-name: QA validation for PR #${{ github.event.pull_request.number }}
+run-name: Agentic QA validation - PR #${{ github.event.pull_request.number }}
 
 on:
   pull_request:
@@ -9,18 +9,26 @@ on:
       - synchronize
       - reopened
 
+
 permissions:
   contents: read
 
+
 jobs:
+
   qa-validation:
 
-    # Only QA branches created by your platform
+    # --------------------------------------------------------
+    # Only run automatically for branches created
+    # by the Agentic QA platform.
+    # --------------------------------------------------------
+
     if: startsWith(github.head_ref, 'qa/')
 
     runs-on: ubuntu-latest
 
     timeout-minutes: 30
+
 
     steps:
 
@@ -28,35 +36,62 @@ jobs:
       # CHECKOUT EXACT PR COMMIT
       # ======================================================
 
-      - name: Checkout PR branch
+      - name: Checkout PR commit
         uses: actions/checkout@v4
+
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
 
       # ======================================================
-      # SHOW EXECUTION CONTEXT
+      # DISPLAY CONTEXT
       # ======================================================
 
-      - name: Display QA execution context
+      - name: Display execution context
+
         shell: bash
+
         run: |
-          echo "PR Number: ${{ github.event.pull_request.number }}"
-          echo "QA Branch: ${{ github.head_ref }}"
-          echo "Base Branch: ${{ github.base_ref }}"
-          echo "Commit SHA: ${{ github.event.pull_request.head.sha }}"
+
+          echo "======================================"
+          echo "Agentic QA PBI Validation"
+          echo "======================================"
+
+          echo "PR Number:"
+          echo "${{ github.event.pull_request.number }}"
+
+          echo "QA Branch:"
+          echo "${{ github.head_ref }}"
+
+          echo "Base Branch:"
+          echo "${{ github.base_ref }}"
+
+          echo "Commit SHA:"
+          echo "${{ github.event.pull_request.head.sha }}"
 
 
       # ======================================================
-      # DISCOVER TEST FILES CHANGED BY THIS PBI PR
+      # FIND FILES CHANGED BY THIS PR
       # ======================================================
 
-      - name: Find changed automated tests
+      - name: Detect changed files
+
         id: changed_tests
+
         shell: bash
+
         run: |
+
+          echo "Fetching base branch..."
+
           git fetch origin "${{ github.base_ref }}"
+
+
+          echo ""
+          echo "Files changed by this PR:"
+          echo "--------------------------------------"
+
 
           mapfile -t CHANGED_FILES < <(
             git diff \
@@ -65,11 +100,16 @@ jobs:
               "origin/${{ github.base_ref }}...HEAD"
           )
 
-          echo "Files changed in this PR:"
 
           printf '%s\n' "${CHANGED_FILES[@]}"
 
+
+          # ==================================================
+          # SELECT ONLY AUTOMATION TEST FILES
+          # ==================================================
+
           TEST_FILES=()
+
 
           for file in "${CHANGED_FILES[@]}"; do
 
@@ -78,9 +118,12 @@ jobs:
               tests/*.spec.js|\
               tests/*.test.js|\
               e2e/*.spec.js|\
-              e2e/*.test.js)
+              e2e/*.test.js|\
+              specs/*.spec.js|\
+              specs/*.test.js)
 
                 TEST_FILES+=("$file")
+
                 ;;
 
             esac
@@ -88,101 +131,143 @@ jobs:
           done
 
 
+          echo ""
+          echo "======================================"
+          echo "PBI-related automation files"
+          echo "======================================"
+
+
           if [ "${#TEST_FILES[@]}" -eq 0 ]; then
 
-            echo "No PBI-related Playwright tests were found."
+            echo "No Playwright test files were changed."
+
+            echo ""
+            echo "The PR does not contain an executable"
+            echo "PBI-related Playwright test."
 
             exit 1
 
           fi
 
 
-          echo ""
-          echo "Tests selected for this PBI:"
-
           printf '%s\n' "${TEST_FILES[@]}"
 
 
-          # Store safely as newline-delimited output.
+          # ==================================================
+          # PASS TEST LIST TO NEXT STEP
+          # ==================================================
 
           {
             echo "files<<EOF"
+
             printf '%s\n' "${TEST_FILES[@]}"
+
             echo "EOF"
+
           } >> "$GITHUB_OUTPUT"
 
 
       # ======================================================
-      # NODE SETUP
+      # NODE
       # ======================================================
 
       - name: Setup Node.js
+
         uses: actions/setup-node@v4
+
         with:
           node-version: "20"
           cache: npm
 
 
       # ======================================================
-      # INSTALL PROJECT
+      # DEPENDENCIES
       # ======================================================
 
       - name: Install dependencies
+
         run: npm ci
 
 
       # ======================================================
-      # PLAYWRIGHT
+      # PLAYWRIGHT BROWSERS
       # ======================================================
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps
+
+        run: |
+
+          npx playwright install --with-deps
 
 
       # ======================================================
-      # EXECUTE ONLY PBI-RELATED TESTS
+      # EXECUTE ONLY TESTS CHANGED BY THE PBI PR
       # ======================================================
 
       - name: Execute PBI-related Playwright tests
+
         shell: bash
+
         env:
           CHANGED_TESTS: ${{ steps.changed_tests.outputs.files }}
 
         run: |
+
+          echo "======================================"
+          echo "Tests selected for execution"
+          echo "======================================"
+
+
           mapfile -t TEST_FILES <<< "$CHANGED_TESTS"
 
-          echo "Executing only these tests:"
 
           printf '%s\n' "${TEST_FILES[@]}"
+
+
+          echo ""
+          echo "Starting Playwright..."
+
 
           npx playwright test "${TEST_FILES[@]}"
 
 
       # ======================================================
-      # EVIDENCE
+      # PLAYWRIGHT REPORT
       # ======================================================
 
       - name: Upload Playwright report
+
         if: always()
 
         uses: actions/upload-artifact@v4
 
         with:
+
           name: playwright-report-pr-${{ github.event.pull_request.number }}
 
           path: playwright-report/
 
           if-no-files-found: ignore
 
+          retention-days: 7
+
+
+      # ======================================================
+      # TEST RESULTS / SCREENSHOTS / TRACES
+      # ======================================================
 
       - name: Upload Playwright test results
+
         if: always()
 
         uses: actions/upload-artifact@v4
 
         with:
+
           name: test-results-pr-${{ github.event.pull_request.number }}
 
           path: test-results/
 
           if-no-files-found: ignore
+
+          retention-days: 7
