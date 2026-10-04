@@ -1,0 +1,125 @@
+name: Agentic QA Validation
+
+run-name: Agentic QA ${{ inputs.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      run_id:
+        description: Agentic QA run identifier
+        required: true
+        type: string
+
+      expected_commit_sha:
+        description: Exact approved Git commit SHA
+        required: true
+        type: string
+
+      issue_number:
+        description: Source GitHub Issue number
+        required: true
+        type: string
+
+      test_paths:
+        description: Approved automated test paths
+        required: true
+        type: string
+
+
+permissions:
+  contents: read
+
+
+jobs:
+
+  qa-validation:
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 30
+
+
+    steps:
+
+      - name: Checkout QA branch
+        uses: actions/checkout@v4
+
+
+      - name: Verify approved commit
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_commit_sha }}
+
+        run: |
+
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+
+          echo "Expected SHA: $EXPECTED_SHA"
+          echo "Actual SHA:   $ACTUAL_SHA"
+
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+
+            echo "ERROR: Commit SHA mismatch."
+
+            exit 1
+
+          fi
+
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+
+        with:
+          node-version: "20"
+          cache: npm
+
+
+      - name: Install dependencies
+        run: npm ci
+
+
+      - name: Install Playwright browsers
+        run: |
+          npx playwright install --with-deps
+
+
+      - name: Execute approved Playwright tests
+        shell: bash
+
+        env:
+          TEST_PATHS: ${{ inputs.test_paths }}
+
+        run: |
+
+          echo "Approved test files:"
+
+          echo "$TEST_PATHS"
+
+          npx playwright test $TEST_PATHS
+
+
+      - name: Upload Playwright report
+        if: always()
+
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: playwright-report-${{ inputs.run_id }}
+
+          path: playwright-report/
+
+          if-no-files-found: ignore
+
+
+      - name: Upload Playwright test results
+        if: always()
+
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: test-results-${{ inputs.run_id }}
+
+          path: test-results/
+
+          if-no-files-found: ignore
